@@ -97,8 +97,12 @@ class DeviceModel(object):
 				self.preproc_param['vg_shift']
 			)
 		if self.train_target == TrainTarget.ADJOINT:
-			adjoint_input = np.ones((origin_input.shape[0], 1))
-			raise Exception('Not Implemented')
+			adjoint_input = np.ones((data_arrays[0].shape[0], 1))
+			preproc_data_arrays = [data_arrays[0],
+									data_arrays[1],
+									adjoint_input,
+									data_arrays[2],
+									data_arrays[3]]
 
 		self.preproc_data_arrays=preproc_data_arrays
 		# Only expand the dim if the number of dimension is 1
@@ -154,7 +158,29 @@ class DeviceModel(object):
 				input_data_train[2].get(), unsafe=True)
 
 		if self.train_target == TrainTarget.ADJOINT:
-			raise Exception('Not Implemented')
+			input_data_train = data_reader.build_input_reader(
+				self.model,
+				self.input_data_store['train'][0],
+				'minidb',
+				['sig_input', 'tanh_input', 'adjoint_input', 'sig_adjoint_label', 'tanh_adjoint_label'],
+				batch_size=train_batch_size,
+				data_type='train',
+			)
+			if 'eval' in self.input_data_store:
+				input_data_eval = data_reader.build_input_reader(
+					self.model,
+					self.input_data_store['eval'][0],
+					'minidb',
+					['eval_sig_input', 'eval_tanh_input', 'eval_adjoint_label', 'eval_sig_adjoint_label', 'eval_tanh_adjoint_label'],
+					batch_size=eval_batch_size,
+					data_type='eval',
+				)
+			self.model.input_feature_schema.adjoint_input.set_value(
+				input_data_train[2].get(), unsafe=True)
+			self.model.trainer_extra_schema.sig_loss_record.label.set_value(
+				input_data_train[3].get(), unsafe=True)
+			self.model.trainer_extra_schema.tanh_loss_record.label.set_value(
+				input_data_train[4].get(), unsafe=True)
 
 
 		# Build the computational nets
@@ -200,7 +226,12 @@ class DeviceModel(object):
 					input_data_eval[2].get(), unsafe=True)
 
 			if self.train_target == TrainTarget.ADJOINT:
-				raise Exception('Not Implemented')
+				self.model.input_feature_schema.adjoint_input.set_value(
+					input_data_eval[2].get(), unsafe=True)
+				self.model.trainer_extra_schema.sig_loss_record.label.set_value(
+					input_data_eval[3].get(), unsafe=True)
+				self.model.trainer_extra_schema.tanh_loss_record.label.set_value(
+					input_data_eval[4].get(), unsafe=True)
 
 			eval_net = instantiator.generate_eval_net(self.model)
 			workspace.CreateNet(eval_net)
@@ -274,7 +305,7 @@ class DeviceModel(object):
 			print('>>> Training without Reports (Fastest mode)')
 			workspace.RunNet(
 				train_net, 
-				num_iter=num_epoch * num_batch_per_epoch
+				num_iter=num_epoch * num_batch_per_epoch,
 			)
 			
 		print('>>> Saving test model')
@@ -311,24 +342,35 @@ class DeviceModel(object):
 				open(self.pickle_file_name, "rb" )
 			)
 		dummy_ids = np.zeros(len(vg))
-		preproc_data_arrays = preproc.dc_iv_preproc(
-			vg, vd, dummy_ids, 
-			self.preproc_param['scale'], 
-			self.preproc_param['vg_shift'], 
-		)
+		preproc_data_arrays = [vg, vd, dummy_ids]
+		if self.train_target == TrainTarget.ORIGIN: 
+			preproc_data_arrays = preproc.dc_iv_preproc(
+				vg, vd, dummy_ids, 
+				self.preproc_param['scale'], 
+				self.preproc_param['vg_shift'], 
+			)
+
 		_preproc_data_arrays = [np.expand_dims(
-			x, axis=1) for x in preproc_data_arrays]
+			x, axis=1)  if x.ndim == 1 else x for x in preproc_data_arrays]
 		workspace.FeedBlob('DBInput_train/sig_input', _preproc_data_arrays[0])
 		workspace.FeedBlob('DBInput_train/tanh_input', _preproc_data_arrays[1])
+
+		if self.train_target == TrainTarget.ADJOINT:
+			adjoint_input = np.ones((vg.shape[0], 1))
+			workspace.FeedBlob('DBInput_train/adjoint_input', adjoint_input)
+
 		pred_net = self.net_store['pred_net']
 		workspace.RunNet(pred_net)
 
 		_ids = np.squeeze(schema.FetchRecord(self.pred).get())
-		restore_id_func, _ = preproc.get_restore_id_func( 
-			self.preproc_param['scale'], 
-			self.preproc_param['vg_shift'], 
-		)
-		ids = restore_id_func(_ids)
+		ids = _ids
+		if self.train_target == TrainTarget.ORIGIN: 
+			restore_id_func, _ = preproc.get_restore_id_func( 
+				self.preproc_param['scale'], 
+				self.preproc_param['vg_shift'], 
+			)
+			ids = restore_id_func(_ids)
+			
 		return _ids, ids
 
 	def plot_loss_trend(self):

@@ -245,7 +245,7 @@ def build_adjoint_pinn(
 			model.output_schema.tanh_adjoint_pred.set_value(
 				tanh_adjoint_pred.get(), unsafe=True)
 			loss = adjoint_loss
-		if train_target == TrainTarget.ORIGIN:
+		elif train_target == TrainTarget.ORIGIN:
 			model.trainer_extra_schema.origin_loss_record.prediction.set_value(
 				origin_pred.get(), unsafe=True)
 			# Add L1 Loss
