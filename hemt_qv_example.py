@@ -26,6 +26,7 @@ plot_iv(
 	voltage[:,0], voltage[:,1], capas[:, 0],
 	styles = ['vg_major_linear', 'vd_major_linear']
 )
+
 plt.show()
 quit()
 scale, vg_shift = preproc.compute_ac_meta(voltage, capas)
